@@ -169,45 +169,41 @@ jobs:
           }
 
       - name: Build exe and installer
-        shell: pwsh
+        shell: bash
         env:
           VER: ${{ needs.prepare.outputs.version }}
         run: |
-          $ErrorActionPreference = "Stop"
-          $src = "$env:GITHUB_WORKSPACE\src"
-          $dist = "$env:GITHUB_WORKSPACE\dist"
+          set -euo pipefail
           # setup.iss uses these fixed paths
-          $stage = "C:\Users\Public\Documents\agent"
-          New-Item -ItemType Directory -Force $dist, "$stage\build" | Out-Null
-          Copy-Item "$src\build\*" "$stage\build" -Recurse -Force
+          stage=/c/Users/Public/Documents/agent
+          mkdir -p dist "${stage}/build"
+          cp -r src/build/. "${stage}/build/"
+          dist_win=$(cygpath -w "$PWD/dist")
 
           # the icon is not part of the rmmagent repo, build without it if missing
-          # (python edits the json, a PowerShell round trip broke it for goversioninfo)
-          if (-not (Test-Path "$src\build\onit.ico")) {
-            python -c "import json,sys; p=sys.argv[1]; d=json.load(open(p)); d['IconPath']=''; json.dump(d, open(p,'w'), indent=2)" "$src\versioninfo.json"
-            if ($LASTEXITCODE) { throw "editing versioninfo.json failed" }
-            $iss = Get-Content "$stage\build\setup.iss" -Raw
-            $iss = $iss -replace '(?m)^(SetupIconFile|WizardSmallImageFile)=.*\r?\n', ''
-            Set-Content "$stage\build\setup.iss" $iss -NoNewline
-          }
+          if [ ! -f src/build/onit.ico ]; then
+            python -c "import json,sys; p=sys.argv[1]; d=json.load(open(p)); d['IconPath']=''; json.dump(d, open(p,'w'), indent=2)" src/versioninfo.json
+            sed -i -E '/^(SetupIconFile|WizardSmallImageFile)=/d' "${stage}/build/setup.iss"
+          fi
+          echo "versioninfo.json: $(wc -c < src/versioninfo.json) bytes"
 
-          Push-Location $src
-          foreach ($arch in "amd64", "386") {
-            Remove-Item resource*.syso -ErrorAction SilentlyContinue
-            $flags = if ($arch -eq "amd64") { @("-64") } else { @() }
-            & "$env:USERPROFILE\go\bin\goversioninfo.exe" @flags -o "resource_windows_$arch.syso"
-            if ($LASTEXITCODE) { throw "goversioninfo failed" }
+          gvi="$(go env GOPATH)/bin/goversioninfo.exe"
+          cd src
+          for arch in amd64 386; do
+            rm -f resource*.syso
+            flags=()
+            if [ "${arch}" = amd64 ]; then flags=(-64); fi
+            "${gvi}" "${flags[@]}" -o "resource_windows_${arch}.syso" versioninfo.json
 
-            $env:CGO_ENABLED = "0"; $env:GOOS = "windows"; $env:GOARCH = $arch
-            go build -trimpath -ldflags "-s -w" -o "$stage\tacticalrmm.exe"
-            if ($LASTEXITCODE) { throw "go build $arch failed" }
+            CGO_ENABLED=0 GOOS=windows GOARCH=${arch} \
+              go build -trimpath -ldflags "-s -w" -o "${stage}/tacticalrmm.exe"
 
-            $name = "tacticalagent-v$env:VER-windows-$arch"
-            & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /Q "/O$dist" "/F$name" "$stage\build\setup.iss"
-            if ($LASTEXITCODE) { throw "Inno Setup $arch failed" }
-          }
-          Pop-Location
-          Get-ChildItem $dist
+            # keep git bash from rewriting the /O /F switches into paths
+            MSYS2_ARG_CONV_EXCL='*' "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" /Q \
+              "/O${dist_win}" "/Ftacticalagent-v${VER}-windows-${arch}" \
+              'C:\Users\Public\Documents\agent\build\setup.iss'
+          done
+          ls -la ../dist
 
       - uses: actions/upload-artifact@v4
         with:
