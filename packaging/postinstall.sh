@@ -8,9 +8,10 @@ if [ -f /etc/tacticalagent ]; then
     systemctl restart tacticalagent.service >/dev/null 2>&1 || true
 else
     cat <<'MSG'
-Tactical RMM agent installed but not enrolled yet. Enroll it with the command
-from Agents > Install Agent > Manual in Tactical RMM, for example:
-  tacticalagent -m install -api https://api.example.com -client-id 1 -site-id 1 -agent-type server -auth <token>
-then start it with: systemctl enable --now tacticalagent
+Tactical RMM agent installed but not enrolled yet. Enroll it with:
+  tacticalagent -m install --api https://api.example.com --client-id <id> --site-id <id> --agent-type server --auth <token>
+The values are in the Linux install script Tactical RMM generates under
+Agents > Install Agent (apiURL, clientID, siteID, token). Then start it with:
+  systemctl enable --now tacticalagent
 MSG
 fi

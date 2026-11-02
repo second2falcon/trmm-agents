@@ -22,7 +22,9 @@ Each build starts it on Debian, Ubuntu, Rocky Linux (RHEL), Fedora, openSUSE and
 The packages install the same binary to `/usr/local/bin/tacticalagent` (where the Tactical RMM
 installer and the agent's self-update expect it) and a systemd unit that only starts once the
 agent is enrolled: a systemd unit in the .deb and .rpm, an OpenRC service in the .apk. After
-installing, enroll it with the command from Agents, Install Agent, Manual and start it with
+installing, enroll it with `tacticalagent -m install --api <url> --client-id <id> --site-id <id>
+--agent-type server|workstation --auth <token>` (the values are in the Linux install script
+Tactical RMM generates under Agents, Install Agent) and start it with
 `systemctl enable --now tacticalagent` or `rc-update add tacticalagent default && rc-service
 tacticalagent start`. Each build installs the .deb on Debian and Ubuntu, the .rpm on Rocky
 Linux, Fedora and openSUSE and the .apk on Alpine. Mesh Central is not part of the
@@ -35,6 +37,7 @@ replaces the release files but agents already on that version will not reinstall
 ## When it runs
 
 - Daily, building only when the rmmagent commit differs from the one in the current release.
+- On every push that changes the workflow or `packaging/`.
 - On demand: Actions, *Build agents*, *Run workflow*, optionally with an rmmagent ref and *force*.
 
 ## Settings
