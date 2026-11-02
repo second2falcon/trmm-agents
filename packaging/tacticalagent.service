@@ -1,0 +1,17 @@
+[Unit]
+Description=Tactical RMM Linux Agent
+# installed by the package before enrollment, start once enrolled
+ConditionPathExists=/etc/tacticalagent
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/tacticalagent -m svc
+User=root
+Group=root
+Restart=always
+RestartSec=5s
+LimitNOFILE=1000000
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target

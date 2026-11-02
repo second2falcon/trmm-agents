@@ -11,10 +11,19 @@ self-built agents instead of the ones from Amidaware's code signing service.
 | `tacticalagent-v<ver>-windows-amd64.exe`, `-windows-386.exe` | Windows, Inno Setup installer (unsigned) |
 | `tacticalagent-v<ver>-linux-amd64`, `-386`, `-arm64`, `-arm` | Linux, static binary |
 | `tacticalagent-v<ver>-darwin-amd64`, `-arm64` | macOS, static binary (unsigned) |
+| `tacticalagent_<ver>-1_<arch>.deb` (amd64, i386, arm64, armhf) | Debian, Ubuntu and derivatives |
+| `tacticalagent-<ver>-1.<arch>.rpm` (x86_64, i386, aarch64, armv7hl) | RHEL, Rocky, Fedora, openSUSE |
 | `SHA256SUMS` | checksums of all files above |
 
 The Linux agent is built with `CGO_ENABLED=0`, so one binary runs on every distribution.
 Each build starts it on Debian, Ubuntu, Rocky Linux (RHEL), Fedora, openSUSE and Alpine.
+
+The packages install the same binary to `/usr/local/bin/tacticalagent` (where the Tactical RMM
+installer and the agent's self-update expect it) and a systemd unit that only starts once the
+agent is enrolled. After installing, enroll it with the command from Agents, Install Agent,
+Manual and run `systemctl enable --now tacticalagent`. Each build installs the .deb on Debian
+and Ubuntu and the .rpm on Rocky Linux, Fedora and openSUSE. Mesh Central is not part of the
+packages, it is installed by the Tactical RMM installer as before.
 
 The release is tagged `v<ver>`, the version from `rmmagent/main.go`. Bump that version in
 rmmagent when existing agents should update to a new build; rebuilding the same version

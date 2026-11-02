@@ -1,0 +1,29 @@
+# .deb and .rpm of the linux agent, built by .github/workflows/build-agents.yml
+# with VER and PKG_ARCH (nfpm arch) set and the binary staged at pkgroot/
+name: tacticalagent
+arch: ${PKG_ARCH}
+platform: linux
+version: ${VER}
+release: 1
+section: admin
+priority: optional
+maintainer: second2falcon
+vendor: second2falcon
+description: Tactical RMM agent, built from github.com/second2falcon/rmmagent
+homepage: https://github.com/second2falcon/rmmagent
+license: Tactical RMM License 1.0
+
+contents:
+  - src: ./pkgroot/tacticalagent
+    dst: /usr/local/bin/tacticalagent
+    file_info:
+      mode: 0755
+  - src: ./packaging/tacticalagent.service
+    dst: /usr/lib/systemd/system/tacticalagent.service
+    file_info:
+      mode: 0644
+
+scripts:
+  postinstall: ./packaging/postinstall.sh
+  preremove: ./packaging/preremove.sh
+  postremove: ./packaging/postremove.sh

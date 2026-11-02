@@ -6,6 +6,7 @@ name: Build agents
 #   tacticalagent-v<ver>-windows-<arch>.exe   Inno Setup installer
 #   tacticalagent-v<ver>-linux-<arch>         static binary
 #   tacticalagent-v<ver>-darwin-<arch>        static binary
+#   tacticalagent_<ver>-1_<arch>.deb, tacticalagent-<ver>-1.<arch>.rpm
 #
 # Runs daily and skips the build when the release for this version already
 # holds the current rmmagent commit; run it by hand to force a build.
@@ -112,36 +113,86 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
-  # The linux agent is a static binary, one build serves every distribution.
-  # Start it on each distro family to catch libc or loader problems.
-  distro-smoke:
+  packages:
     needs: [prepare, unix]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: agents-unix
+          path: dist
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+
+      - name: Build .deb and .rpm
+        env:
+          VER: ${{ needs.prepare.outputs.version }}
+        run: |
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.41.1
+          nfpm="$(go env GOPATH)/bin/nfpm"
+          mkdir -p pkgroot out
+          # go arch:nfpm arch, nfpm maps these to the deb and rpm names
+          for pair in amd64:amd64 386:386 arm64:arm64 arm:arm7; do
+            install -m 0755 "dist/tacticalagent-v${VER}-linux-${pair%%:*}" pkgroot/tacticalagent
+            for format in deb rpm; do
+              PKG_ARCH=${pair#*:} "${nfpm}" pkg -f packaging/nfpm.yaml -p "${format}" -t out/
+            done
+          done
+          ls -la out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agents-packages
+          path: out/*
+          if-no-files-found: error
+
+  # The linux agent is a static binary, one build serves every distribution.
+  # Start it on each distro family to catch libc or loader problems, and
+  # install the matching package where there is one.
+  distro-smoke:
+    needs: [prepare, unix, packages]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        image:
-          - debian:12
-          - ubuntu:24.04
-          - rockylinux:9
-          - fedora:41
-          - opensuse/leap:15.6
-          - alpine:3.22
+        include:
+          - { image: "debian:12", pkg: deb }
+          - { image: "ubuntu:24.04", pkg: deb }
+          - { image: "rockylinux:9", pkg: rpm }
+          - { image: "fedora:41", pkg: rpm }
+          - { image: "opensuse/leap:15.6", pkg: rpm }
+          - { image: "alpine:3.22", pkg: none }
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: agents-unix
           path: dist
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: agents-packages
+          path: dist
+
       - name: Run agent on ${{ matrix.image }}
         env:
           VER: ${{ needs.prepare.outputs.version }}
         run: |
-          bin="tacticalagent-v${VER}-linux-amd64"
-          chmod +x "dist/${bin}"
-          out=$(docker run --rm -v "$PWD/dist:/dist:ro" "${{ matrix.image }}" "/dist/${bin}" -version)
-          echo "${out}"
-          echo "${out}" | grep -q "${VER}"
+          chmod +x dist/tacticalagent-v*
+          docker run --rm -v "$PWD/dist:/dist:ro" -e VER -e PKG="${{ matrix.pkg }}" "${{ matrix.image }}" sh -euc '
+            "/dist/tacticalagent-v${VER}-linux-amd64" -version | grep "${VER}"
+            case "${PKG}" in
+            deb) dpkg -i "/dist/tacticalagent_${VER}-1_amd64.deb" ;;
+            rpm) rpm -i "/dist/tacticalagent-${VER}-1.x86_64.rpm" ;;
+            none) exit 0 ;;
+            esac
+            /usr/local/bin/tacticalagent -version | grep "${VER}"
+            test -f /usr/lib/systemd/system/tacticalagent.service
+          '
 
   windows:
     needs: prepare
@@ -212,7 +263,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: [prepare, unix, distro-smoke, windows]
+    needs: [prepare, unix, packages, distro-smoke, windows]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -227,7 +278,7 @@ jobs:
           SHA: ${{ needs.prepare.outputs.sha }}
         run: |
           cd dist
-          sha256sum tacticalagent-* > SHA256SUMS
+          sha256sum tacticalagent* > SHA256SUMS
           cat SHA256SUMS
           notes="Built from ${RMMAGENT_REPO}@${SHA} (${RMMAGENT_REF}). Windows files are unsigned."
           tag="v${VER}"
