@@ -6,7 +6,8 @@ name: Build agents
 #   tacticalagent-v<ver>-windows-<arch>.exe   Inno Setup installer
 #   tacticalagent-v<ver>-linux-<arch>         static binary
 #   tacticalagent-v<ver>-darwin-<arch>        static binary
-#   tacticalagent_<ver>-1_<arch>.deb, tacticalagent-<ver>-1.<arch>.rpm
+#   tacticalagent_<ver>-1_<arch>.deb, tacticalagent-<ver>-1.<arch>.rpm,
+#   tacticalagent_<ver>-r1_<arch>.apk (unsigned, apk add --allow-untrusted)
 #
 # Runs daily and skips the build when the release for this version already
 # holds the current rmmagent commit; run it by hand to force a build.
@@ -129,7 +130,7 @@ jobs:
           go-version: stable
           cache: false
 
-      - name: Build .deb and .rpm
+      - name: Build .deb, .rpm and .apk
         env:
           VER: ${{ needs.prepare.outputs.version }}
         run: |
@@ -139,7 +140,7 @@ jobs:
           # go arch:nfpm arch, nfpm maps these to the deb and rpm names
           for pair in amd64:amd64 386:386 arm64:arm64 arm:arm7; do
             install -m 0755 "dist/tacticalagent-v${VER}-linux-${pair%%:*}" pkgroot/tacticalagent
-            for format in deb rpm; do
+            for format in deb rpm apk; do
               PKG_ARCH=${pair#*:} "${nfpm}" pkg -f packaging/nfpm.yaml -p "${format}" -t out/
             done
           done
@@ -166,7 +167,7 @@ jobs:
           - { image: "rockylinux:9", pkg: rpm }
           - { image: "fedora:41", pkg: rpm }
           - { image: "opensuse/leap:15.6", pkg: rpm }
-          - { image: "alpine:3.22", pkg: none }
+          - { image: "alpine:3.22", pkg: apk }
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -188,10 +189,14 @@ jobs:
             case "${PKG}" in
             deb) dpkg -i "/dist/tacticalagent_${VER}-1_amd64.deb" ;;
             rpm) rpm -i "/dist/tacticalagent-${VER}-1.x86_64.rpm" ;;
-            none) exit 0 ;;
+            apk) apk add --no-network --allow-untrusted "/dist/tacticalagent_${VER}-r1_x86_64.apk" ;;
             esac
             /usr/local/bin/tacticalagent -version | grep "${VER}"
-            test -f /usr/lib/systemd/system/tacticalagent.service
+            if [ "${PKG}" = apk ]; then
+              test -x /etc/init.d/tacticalagent
+            else
+              test -f /usr/lib/systemd/system/tacticalagent.service
+            fi
           '
 
   windows:

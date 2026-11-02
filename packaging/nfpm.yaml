@@ -1,4 +1,4 @@
-# .deb and .rpm of the linux agent, built by .github/workflows/build-agents.yml
+# .deb, .rpm and .apk of the linux agent, built by .github/workflows/build-agents.yml
 # with VER and PKG_ARCH (nfpm arch) set and the binary staged at pkgroot/
 name: tacticalagent
 arch: ${PKG_ARCH}
@@ -18,12 +18,34 @@ contents:
     dst: /usr/local/bin/tacticalagent
     file_info:
       mode: 0755
+  # systemd for deb and rpm, OpenRC for Alpine
   - src: ./packaging/tacticalagent.service
     dst: /usr/lib/systemd/system/tacticalagent.service
+    packager: deb
     file_info:
       mode: 0644
+  - src: ./packaging/tacticalagent.service
+    dst: /usr/lib/systemd/system/tacticalagent.service
+    packager: rpm
+    file_info:
+      mode: 0644
+  - src: ./packaging/tacticalagent.openrc
+    dst: /etc/init.d/tacticalagent
+    packager: apk
+    file_info:
+      mode: 0755
 
 scripts:
   postinstall: ./packaging/postinstall.sh
   preremove: ./packaging/preremove.sh
   postremove: ./packaging/postremove.sh
+
+overrides:
+  apk:
+    scripts:
+      postinstall: ./packaging/postinstall-openrc.sh
+      preremove: ./packaging/preremove-openrc.sh
+
+apk:
+  scripts:
+    postupgrade: ./packaging/postinstall-openrc.sh

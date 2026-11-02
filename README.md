@@ -13,6 +13,7 @@ self-built agents instead of the ones from Amidaware's code signing service.
 | `tacticalagent-v<ver>-darwin-amd64`, `-arm64` | macOS, static binary (unsigned) |
 | `tacticalagent_<ver>-1_<arch>.deb` (amd64, i386, arm64, armhf) | Debian, Ubuntu and derivatives |
 | `tacticalagent-<ver>-1.<arch>.rpm` (x86_64, i386, aarch64, armv7hl) | RHEL, Rocky, Fedora, openSUSE |
+| `tacticalagent_<ver>-r1_<arch>.apk` (x86_64, x86, aarch64, armv7) | Alpine, unsigned: `apk add --allow-untrusted` |
 | `SHA256SUMS` | checksums of all files above |
 
 The Linux agent is built with `CGO_ENABLED=0`, so one binary runs on every distribution.
@@ -20,9 +21,11 @@ Each build starts it on Debian, Ubuntu, Rocky Linux (RHEL), Fedora, openSUSE and
 
 The packages install the same binary to `/usr/local/bin/tacticalagent` (where the Tactical RMM
 installer and the agent's self-update expect it) and a systemd unit that only starts once the
-agent is enrolled. After installing, enroll it with the command from Agents, Install Agent,
-Manual and run `systemctl enable --now tacticalagent`. Each build installs the .deb on Debian
-and Ubuntu and the .rpm on Rocky Linux, Fedora and openSUSE. Mesh Central is not part of the
+agent is enrolled: a systemd unit in the .deb and .rpm, an OpenRC service in the .apk. After
+installing, enroll it with the command from Agents, Install Agent, Manual and start it with
+`systemctl enable --now tacticalagent` or `rc-update add tacticalagent default && rc-service
+tacticalagent start`. Each build installs the .deb on Debian and Ubuntu, the .rpm on Rocky
+Linux, Fedora and openSUSE and the .apk on Alpine. Mesh Central is not part of the
 packages, it is installed by the Tactical RMM installer as before.
 
 The release is tagged `v<ver>`, the version from `rmmagent/main.go`. Bump that version in

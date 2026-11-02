@@ -1,0 +1,22 @@
+#!/sbin/openrc-run
+
+name="Tactical RMM Linux Agent"
+command="/usr/local/bin/tacticalagent"
+command_args="-m svc"
+supervisor=supervise-daemon
+respawn_delay=5
+respawn_max=0
+rc_ulimit="-n 1000000"
+
+depend() {
+    need net
+    after firewall
+}
+
+# installed by the package before enrollment, start once enrolled
+start_pre() {
+    if [ ! -f /etc/tacticalagent ]; then
+        eerror "Not enrolled yet, run tacticalagent -m install first"
+        return 1
+    fi
+}
