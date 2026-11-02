@@ -1,0 +1,243 @@
+name: Build agents
+
+# Builds the Tactical RMM agent from the rmmagent repo for every platform the
+# server can hand out and publishes it as a release named after the agent
+# version, with the file names the server downloads:
+#   tacticalagent-v<ver>-windows-<arch>.exe   Inno Setup installer
+#   tacticalagent-v<ver>-linux-<arch>         static binary
+#   tacticalagent-v<ver>-darwin-<arch>        static binary
+#
+# Runs daily and skips the build when the release for this version already
+# holds the current rmmagent commit; run it by hand to force a build.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "rmmagent branch, tag or commit (default: RMMAGENT_REF variable, else develop)"
+        required: false
+      force:
+        description: "Rebuild even if the release already has this commit"
+        type: boolean
+        default: false
+  schedule:
+    - cron: "17 3 * * *"
+  push:
+    branches: [develop, main]
+    paths: [".github/workflows/build-agents.yml"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-agents
+  cancel-in-progress: false
+
+env:
+  RMMAGENT_REPO: ${{ vars.RMMAGENT_REPO || 'second2falcon/rmmagent' }}
+  RMMAGENT_REF: ${{ inputs.ref || vars.RMMAGENT_REF || 'develop' }}
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      sha: ${{ steps.meta.outputs.sha }}
+      build: ${{ steps.meta.outputs.build }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.RMMAGENT_REPO }}
+          ref: ${{ env.RMMAGENT_REF }}
+          token: ${{ secrets.RMMAGENT_TOKEN || github.token }}
+          path: src
+
+      - name: Read version and decide whether to build
+        id: meta
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ inputs.force || false }}
+        run: |
+          version=$(grep -oP '^\s*version\s*=\s*"\K[^"]+' src/main.go)
+          sha=$(git -C src rev-parse HEAD)
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+
+          build=true
+          if [ "${FORCE}" != "true" ] && [ "${{ github.event_name }}" = "schedule" ] &&
+             gh release view "v${version}" -R "${{ github.repository }}" --json body -q .body 2>/dev/null | grep -q "${sha}"; then
+            build=false
+          fi
+          echo "build=${build}" >> "$GITHUB_OUTPUT"
+          echo "Agent v${version} from ${RMMAGENT_REPO}@${RMMAGENT_REF} (${sha}), build=${build}" >> "$GITHUB_STEP_SUMMARY"
+
+  unix:
+    needs: prepare
+    if: needs.prepare.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.RMMAGENT_REPO }}
+          ref: ${{ needs.prepare.outputs.sha }}
+          token: ${{ secrets.RMMAGENT_TOKEN || github.token }}
+          path: src
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: src/go.mod
+          cache-dependency-path: src/go.sum
+
+      - name: Test
+        working-directory: src
+        run: go test ./agent/...
+
+      - name: Build linux and darwin
+        working-directory: src
+        env:
+          VER: ${{ needs.prepare.outputs.version }}
+        run: |
+          mkdir -p ../dist
+          for target in linux/amd64 linux/386 linux/arm64 linux/arm darwin/amd64 darwin/arm64; do
+            os=${target%/*}
+            arch=${target#*/}
+            echo "Building ${os}/${arch}"
+            env CGO_ENABLED=0 GOOS=${os} GOARCH=${arch} \
+              go build -trimpath -ldflags "-s -w" -o "../dist/tacticalagent-v${VER}-${os}-${arch}"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agents-unix
+          path: dist/*
+          if-no-files-found: error
+
+  # The linux agent is a static binary, one build serves every distribution.
+  # Start it on each distro family to catch libc or loader problems.
+  distro-smoke:
+    needs: [prepare, unix]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - debian:12
+          - ubuntu:24.04
+          - rockylinux:9
+          - fedora:41
+          - opensuse/leap:15.6
+          - alpine:3.22
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: agents-unix
+          path: dist
+
+      - name: Run agent on ${{ matrix.image }}
+        env:
+          VER: ${{ needs.prepare.outputs.version }}
+        run: |
+          bin="tacticalagent-v${VER}-linux-amd64"
+          chmod +x "dist/${bin}"
+          out=$(docker run --rm -v "$PWD/dist:/dist:ro" "${{ matrix.image }}" "/dist/${bin}" -version)
+          echo "${out}"
+          echo "${out}" | grep -q "${VER}"
+
+  windows:
+    needs: prepare
+    if: needs.prepare.outputs.build == 'true'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.RMMAGENT_REPO }}
+          ref: ${{ needs.prepare.outputs.sha }}
+          token: ${{ secrets.RMMAGENT_TOKEN || github.token }}
+          path: src
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: src/go.mod
+          cache-dependency-path: src/go.sum
+
+      - name: Install goversioninfo and Inno Setup
+        shell: pwsh
+        run: |
+          go install github.com/josephspurrier/goversioninfo/cmd/goversioninfo@v1.4.0
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup -y --no-progress
+          }
+
+      - name: Build exe and installer
+        shell: pwsh
+        env:
+          VER: ${{ needs.prepare.outputs.version }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $src = "$env:GITHUB_WORKSPACE\src"
+          $dist = "$env:GITHUB_WORKSPACE\dist"
+          # setup.iss uses these fixed paths
+          $stage = "C:\Users\Public\Documents\agent"
+          New-Item -ItemType Directory -Force $dist, "$stage\build" | Out-Null
+          Copy-Item "$src\build\*" "$stage\build" -Recurse -Force
+
+          # the icon is not part of the rmmagent repo, build without it if missing
+          $info = Get-Content "$src\versioninfo.json" -Raw | ConvertFrom-Json
+          $iss = Get-Content "$stage\build\setup.iss" -Raw
+          if (-not (Test-Path "$src\build\onit.ico")) {
+            $info.IconPath = ""
+            $iss = $iss -replace '(?m)^(SetupIconFile|WizardSmallImageFile)=.*\r?\n', ''
+          }
+          $info | ConvertTo-Json -Depth 10 | Set-Content "$src\versioninfo.json"
+          Set-Content "$stage\build\setup.iss" $iss
+
+          Push-Location $src
+          foreach ($arch in "amd64", "386") {
+            Remove-Item resource*.syso -ErrorAction SilentlyContinue
+            $flags = if ($arch -eq "amd64") { @("-64") } else { @() }
+            & "$env:USERPROFILE\go\bin\goversioninfo.exe" @flags -o "resource_windows_$arch.syso"
+            if ($LASTEXITCODE) { throw "goversioninfo failed" }
+
+            $env:CGO_ENABLED = "0"; $env:GOOS = "windows"; $env:GOARCH = $arch
+            go build -trimpath -ldflags "-s -w" -o "$stage\tacticalrmm.exe"
+            if ($LASTEXITCODE) { throw "go build $arch failed" }
+
+            $name = "tacticalagent-v$env:VER-windows-$arch"
+            & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /Q "/O$dist" "/F$name" "$stage\build\setup.iss"
+            if ($LASTEXITCODE) { throw "Inno Setup $arch failed" }
+          }
+          Pop-Location
+          Get-ChildItem $dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agents-windows
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    needs: [prepare, unix, distro-smoke, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish release v${{ needs.prepare.outputs.version }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VER: ${{ needs.prepare.outputs.version }}
+          SHA: ${{ needs.prepare.outputs.sha }}
+        run: |
+          cd dist
+          sha256sum tacticalagent-* > SHA256SUMS
+          cat SHA256SUMS
+          notes="Built from ${RMMAGENT_REPO}@${SHA} (${RMMAGENT_REF}). Windows files are unsigned."
+          tag="v${VER}"
+          if gh release view "${tag}" -R "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload "${tag}" ./* --clobber -R "${{ github.repository }}"
+            gh release edit "${tag}" --notes "${notes}" -R "${{ github.repository }}"
+          else
+            gh release create "${tag}" ./* --title "Agent ${tag}" --notes "${notes}" -R "${{ github.repository }}"
+          fi
