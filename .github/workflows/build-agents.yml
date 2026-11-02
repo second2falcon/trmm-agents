@@ -182,14 +182,14 @@ jobs:
           Copy-Item "$src\build\*" "$stage\build" -Recurse -Force
 
           # the icon is not part of the rmmagent repo, build without it if missing
-          $info = Get-Content "$src\versioninfo.json" -Raw | ConvertFrom-Json
-          $iss = Get-Content "$stage\build\setup.iss" -Raw
+          # (python edits the json, a PowerShell round trip broke it for goversioninfo)
           if (-not (Test-Path "$src\build\onit.ico")) {
-            $info.IconPath = ""
+            python -c "import json,sys; p=sys.argv[1]; d=json.load(open(p)); d['IconPath']=''; json.dump(d, open(p,'w'), indent=2)" "$src\versioninfo.json"
+            if ($LASTEXITCODE) { throw "editing versioninfo.json failed" }
+            $iss = Get-Content "$stage\build\setup.iss" -Raw
             $iss = $iss -replace '(?m)^(SetupIconFile|WizardSmallImageFile)=.*\r?\n', ''
+            Set-Content "$stage\build\setup.iss" $iss -NoNewline
           }
-          $info | ConvertTo-Json -Depth 10 | Set-Content "$src\versioninfo.json"
-          Set-Content "$stage\build\setup.iss" $iss
 
           Push-Location $src
           foreach ($arch in "amd64", "386") {
