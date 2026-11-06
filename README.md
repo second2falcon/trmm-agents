@@ -38,6 +38,9 @@ replaces the release files but agents already on that version will not reinstall
 
 - Daily, building only when the rmmagent commit differs from the one in the current release.
 - On every push that changes the workflow or `packaging/`.
+Without `RMMAGENT_REF`, scheduled and push runs build the same rmmagent ref as the latest
+release, so set a ref once with a manual run and later runs follow that branch.
+
 - On demand: Actions, *Build agents*, *Run workflow*, optionally with an rmmagent ref and *force*.
 
 ## Settings
@@ -47,7 +50,7 @@ Repository variables (Settings, Secrets and variables, Actions, Variables):
 | Variable | Default | |
 |---|---|---|
 | `RMMAGENT_REPO` | `second2falcon/rmmagent` | repo to build |
-| `RMMAGENT_REF` | `develop` | branch, tag or commit to build |
+| `RMMAGENT_REF` | ref of the latest release, else `develop` | branch, tag or commit to build |
 
 Secret `RMMAGENT_TOKEN` is only needed if the rmmagent repo is private.
 

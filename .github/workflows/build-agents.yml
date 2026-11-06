@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: "rmmagent branch, tag or commit (default: RMMAGENT_REF variable, else develop)"
+        description: "rmmagent branch, tag or commit (default: RMMAGENT_REF variable, else the ref of the latest release, else develop)"
         required: false
       force:
         description: "Rebuild even if the release already has this commit"
@@ -36,7 +36,6 @@ concurrency:
 
 env:
   RMMAGENT_REPO: ${{ vars.RMMAGENT_REPO || 'second2falcon/rmmagent' }}
-  RMMAGENT_REF: ${{ inputs.ref || vars.RMMAGENT_REF || 'develop' }}
 
 jobs:
   prepare:
@@ -44,12 +43,32 @@ jobs:
     outputs:
       version: ${{ steps.meta.outputs.version }}
       sha: ${{ steps.meta.outputs.sha }}
+      ref: ${{ steps.ref.outputs.ref }}
       build: ${{ steps.meta.outputs.build }}
     steps:
+      # Scheduled and push runs keep building the ref the latest release was
+      # built from, so they never replace a release with another branch.
+      - name: Pick the rmmagent ref
+        id: ref
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_REF: ${{ inputs.ref }}
+          VAR_REF: ${{ vars.RMMAGENT_REF }}
+        run: |
+          ref="${INPUT_REF:-${VAR_REF}}"
+          if [ -z "${ref}" ]; then
+            tag=$(gh release list -R "${{ github.repository }}" --limit 1 --json tagName -q '.[0].tagName' 2>/dev/null || true)
+            if [ -n "${tag}" ]; then
+              ref=$(gh release view "${tag}" -R "${{ github.repository }}" --json body -q .body |
+                sed -n 's/^Built from [^@]*@[0-9a-f]* (\([^)]*\)).*/\1/p')
+            fi
+          fi
+          echo "ref=${ref:-develop}" >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@v4
         with:
           repository: ${{ env.RMMAGENT_REPO }}
-          ref: ${{ env.RMMAGENT_REF }}
+          ref: ${{ steps.ref.outputs.ref }}
           token: ${{ secrets.RMMAGENT_TOKEN || github.token }}
           path: src
 
@@ -70,7 +89,7 @@ jobs:
             build=false
           fi
           echo "build=${build}" >> "$GITHUB_OUTPUT"
-          echo "Agent v${version} from ${RMMAGENT_REPO}@${RMMAGENT_REF} (${sha}), build=${build}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Agent v${version} from ${RMMAGENT_REPO}@${{ steps.ref.outputs.ref }} (${sha}), build=${build}" >> "$GITHUB_STEP_SUMMARY"
 
   unix:
     needs: prepare
@@ -280,11 +299,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VER: ${{ needs.prepare.outputs.version }}
           SHA: ${{ needs.prepare.outputs.sha }}
+          REF: ${{ needs.prepare.outputs.ref }}
         run: |
           cd dist
           sha256sum tacticalagent* > SHA256SUMS
           cat SHA256SUMS
-          notes="Built from ${RMMAGENT_REPO}@${SHA} (${RMMAGENT_REF}). Windows files are unsigned."
+          # the first line is read back by the next run to pick the same ref
+          notes="Built from ${RMMAGENT_REPO}@${SHA} (${REF}). Windows files are unsigned."
           tag="v${VER}"
           if gh release view "${tag}" -R "${{ github.repository }}" >/dev/null 2>&1; then
             gh release upload "${tag}" ./* --clobber -R "${{ github.repository }}"
